@@ -19,11 +19,14 @@ export default function AddExpensePage() {
   const [expenseName, setExpenseName] = useState("");
   const [amount, setAmount] = useState("");
 
-  const [receiptFile, setReceiptFile] = useState<File | null>(null);
-  const [receiptPreview, setReceiptPreview] = useState("");
+  const [receiptFile, setReceiptFile] =
+    useState<File | null>(null);
+  const [receiptPreview, setReceiptPreview] =
+    useState("");
 
   const [paidBy, setPaidBy] = useState("");
-  const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
+  const [selectedMembers, setSelectedMembers] =
+    useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -57,7 +60,9 @@ export default function AddExpensePage() {
       .from("group_members")
       .select("user_id, name")
       .eq("group_id", savedGroup.id)
-      .order("joined_at", { ascending: true });
+      .order("joined_at", {
+        ascending: true,
+      });
 
     if (error) {
       alert(error.message);
@@ -71,7 +76,9 @@ export default function AddExpensePage() {
 
     // Select everyone by default.
     setSelectedMembers(
-      loadedMembers.map((member) => member.user_id)
+      loadedMembers.map(
+        (member) => member.user_id
+      )
     );
 
     // Default payer = current user.
@@ -83,7 +90,9 @@ export default function AddExpensePage() {
   function toggleMember(userId: string) {
     setSelectedMembers((current) => {
       if (current.includes(userId)) {
-        return current.filter((id) => id !== userId);
+        return current.filter(
+          (id) => id !== userId
+        );
       }
 
       return [...current, userId];
@@ -110,15 +119,80 @@ export default function AddExpensePage() {
 
     // 10 MB maximum.
     if (file.size > 10 * 1024 * 1024) {
-      alert("Receipt image must be smaller than 10 MB.");
+      alert(
+        "Receipt image must be smaller than 10 MB."
+      );
       event.target.value = "";
       return;
     }
 
     setReceiptFile(file);
 
-    const previewUrl = URL.createObjectURL(file);
+    const previewUrl =
+      URL.createObjectURL(file);
+
     setReceiptPreview(previewUrl);
+  }
+
+  async function sendExpenseNotifications(
+    expenseId: string
+  ) {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      if (!session?.access_token) {
+        console.error(
+          "No active session for notifications."
+        );
+        return;
+      }
+
+      console.log(
+        "Sending expense notifications for:",
+        expenseId
+      );
+
+      const response = await fetch(
+        "/api/send-expense-notifications",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            expenseId,
+          }),
+        }
+      );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        console.error(
+          "Notification API error:",
+          result
+        );
+        return;
+      }
+
+      console.log(
+        "Expense notifications:",
+        result
+      );
+    } catch (error) {
+      /*
+       * Notification failure must NOT
+       * break expense creation.
+       */
+      console.error(
+        "Could not send expense notifications:",
+        error
+      );
+    }
   }
 
   async function addExpense() {
@@ -133,7 +207,9 @@ export default function AddExpensePage() {
     }
 
     if (selectedMembers.length === 0) {
-      alert("Please select at least one person.");
+      alert(
+        "Please select at least one person."
+      );
       return;
     }
 
@@ -153,15 +229,20 @@ export default function AddExpensePage() {
 
     setSaving(true);
 
-    // Work in cents to avoid floating-point money errors.
-    const totalCents = Math.round(Number(amount) * 100);
+    // Work in cents to avoid floating-point
+    // money errors.
+    const totalCents = Math.round(
+      Number(amount) * 100
+    );
 
     const baseShare = Math.floor(
-      totalCents / selectedMembers.length
+      totalCents /
+        selectedMembers.length
     );
 
     const remainingCents =
-      totalCents % selectedMembers.length;
+      totalCents %
+      selectedMembers.length;
 
     // --------------------------------------------------
     // 1. Create the expense
@@ -194,28 +275,32 @@ export default function AddExpensePage() {
     // 2. Create payment/share rows
     // --------------------------------------------------
 
-    const paymentRows = selectedMembers.map(
-      (userId, index) => {
-        let shareCents = baseShare;
+    const paymentRows =
+      selectedMembers.map(
+        (userId, index) => {
+          let shareCents = baseShare;
 
-        if (index < remainingCents) {
-          shareCents += 1;
+          if (index < remainingCents) {
+            shareCents += 1;
+          }
+
+          return {
+            expense_id: expense.id,
+            user_id: userId,
+            amount: Number(
+              (
+                shareCents / 100
+              ).toFixed(2)
+            ),
+            paid:
+              userId === paidBy,
+            paid_at:
+              userId === paidBy
+                ? new Date().toISOString()
+                : null,
+          };
         }
-
-        return {
-          expense_id: expense.id,
-          user_id: userId,
-          amount: Number(
-            (shareCents / 100).toFixed(2)
-          ),
-          paid: userId === paidBy,
-          paid_at:
-            userId === paidBy
-              ? new Date().toISOString()
-              : null,
-        };
-      }
-    );
+      );
 
     const {
       error: paymentError,
@@ -242,20 +327,29 @@ export default function AddExpensePage() {
 
     if (receiptFile) {
       const fileExtension =
-        receiptFile.name.split(".").pop()?.toLowerCase() ||
+        receiptFile.name
+          .split(".")
+          .pop()
+          ?.toLowerCase() ||
         "jpg";
 
-      const filePath = `${savedGroup.id}/${expense.id}.${fileExtension}`;
+      const filePath =
+        `${savedGroup.id}/${expense.id}.${fileExtension}`;
 
       const {
         error: uploadError,
       } = await supabase.storage
         .from("receipts")
-        .upload(filePath, receiptFile, {
-          cacheControl: "3600",
-          upsert: true,
-          contentType: receiptFile.type,
-        });
+        .upload(
+          filePath,
+          receiptFile,
+          {
+            cacheControl: "3600",
+            upsert: true,
+            contentType:
+              receiptFile.type,
+          }
+        );
 
       if (uploadError) {
         setSaving(false);
@@ -296,7 +390,8 @@ export default function AddExpensePage() {
       } = await supabase
         .from("expenses")
         .update({
-          receipt_url: receiptUrl,
+          receipt_url:
+            receiptUrl,
         })
         .eq("id", expense.id);
 
@@ -312,7 +407,27 @@ export default function AddExpensePage() {
     }
 
     // --------------------------------------------------
-    // 6. Everything succeeded
+    // 6. Send push notifications
+    // --------------------------------------------------
+
+    /*
+     * The expense and payment rows now exist.
+     *
+     * The server will:
+     * - find unpaid participants
+     * - check who enabled notifications
+     * - find their push subscriptions
+     * - send the notification
+     *
+     * Notification failure will NOT delete
+     * or invalidate the expense.
+     */
+    await sendExpenseNotifications(
+      expense.id
+    );
+
+    // --------------------------------------------------
+    // 7. Everything finished
     // --------------------------------------------------
 
     setSaving(false);
@@ -357,7 +472,9 @@ export default function AddExpensePage() {
               type="text"
               value={expenseName}
               onChange={(e) =>
-                setExpenseName(e.target.value)
+                setExpenseName(
+                  e.target.value
+                )
               }
               placeholder="e.g. Groceries"
               className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-black"
@@ -377,7 +494,9 @@ export default function AddExpensePage() {
               step="0.01"
               value={amount}
               onChange={(e) =>
-                setAmount(e.target.value)
+                setAmount(
+                  e.target.value
+                )
               }
               placeholder="e.g. 63.42"
               className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-black"
@@ -394,21 +513,30 @@ export default function AddExpensePage() {
             <select
               value={paidBy}
               onChange={(e) =>
-                setPaidBy(e.target.value)
+                setPaidBy(
+                  e.target.value
+                )
               }
               className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-black"
             >
-              {members.map((member) => (
-                <option
-                  key={member.user_id}
-                  value={member.user_id}
-                >
-                  {member.name}
-                  {member.user_id === currentUserId
-                    ? " (You)"
-                    : ""}
-                </option>
-              ))}
+              {members.map(
+                (member) => (
+                  <option
+                    key={
+                      member.user_id
+                    }
+                    value={
+                      member.user_id
+                    }
+                  >
+                    {member.name}
+                    {member.user_id ===
+                    currentUserId
+                      ? " (You)"
+                      : ""}
+                  </option>
+                )
+              )}
             </select>
           </div>
 
@@ -422,7 +550,9 @@ export default function AddExpensePage() {
             <input
               type="file"
               accept="image/*"
-              onChange={handleReceiptChange}
+              onChange={
+                handleReceiptChange
+              }
               className="mt-1 w-full rounded-lg border border-gray-300 p-3 text-black"
             />
 
@@ -438,7 +568,9 @@ export default function AddExpensePage() {
 
                 <div className="mt-3 overflow-hidden rounded-xl border border-gray-200 bg-gray-50 p-3">
                   <img
-                    src={receiptPreview}
+                    src={
+                      receiptPreview
+                    }
                     alt="Receipt preview"
                     className="max-h-80 w-full rounded-lg object-contain"
                   />
@@ -456,28 +588,35 @@ export default function AddExpensePage() {
 
             <div className="mt-3 space-y-3">
 
-              {members.map((member) => (
-                <label
-                  key={member.user_id}
-                  className="flex items-center gap-3 text-black"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedMembers.includes(
+              {members.map(
+                (member) => (
+                  <label
+                    key={
                       member.user_id
-                    )}
-                    onChange={() =>
-                      toggleMember(member.user_id)
                     }
-                  />
+                    className="flex items-center gap-3 text-black"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedMembers.includes(
+                        member.user_id
+                      )}
+                      onChange={() =>
+                        toggleMember(
+                          member.user_id
+                        )
+                      }
+                    />
 
-                  {member.name}
+                    {member.name}
 
-                  {member.user_id === currentUserId
-                    ? " (You)"
-                    : ""}
-                </label>
-              ))}
+                    {member.user_id ===
+                    currentUserId
+                      ? " (You)"
+                      : ""}
+                  </label>
+                )
+              )}
 
             </div>
           </div>
@@ -491,9 +630,13 @@ export default function AddExpensePage() {
 
             <p className="mt-1 text-2xl font-bold text-black">
               €
-              {selectedMembers.length > 0
+
+              {selectedMembers.length >
+              0
                 ? (
-                    Number(amount || 0) /
+                    Number(
+                      amount || 0
+                    ) /
                     selectedMembers.length
                   ).toFixed(2)
                 : "0.00"}

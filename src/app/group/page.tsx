@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
+import WelcomePopup from "@/components/WelcomePopup";
 
 type Member = {
   user_id: string;
@@ -55,7 +56,6 @@ export default function GroupPage() {
     try {
       setLoading(true);
 
-      // Check login
       const {
         data: { user },
         error: userError,
@@ -67,12 +67,6 @@ export default function GroupPage() {
       }
 
       setCurrentUserId(user.id);
-
-      /*
-        First try localStorage.
-        If it doesn't exist, find the group directly
-        from Supabase so the app works on another device.
-      */
 
       let savedGroup: Group | null = null;
 
@@ -91,19 +85,16 @@ export default function GroupPage() {
         }
       }
 
-      /*
-        If localStorage doesn't have the group,
-        find the user's membership in Supabase.
-      */
-
       if (!savedGroup) {
-        const { data: membership, error: membershipError } =
-          await supabase
-            .from("group_members")
-            .select("group_id")
-            .eq("user_id", user.id)
-            .limit(1)
-            .maybeSingle();
+        const {
+          data: membership,
+          error: membershipError,
+        } = await supabase
+          .from("group_members")
+          .select("group_id")
+          .eq("user_id", user.id)
+          .limit(1)
+          .maybeSingle();
 
         if (membershipError) {
           console.error(
@@ -118,14 +109,14 @@ export default function GroupPage() {
           return;
         }
 
-        const { data: foundGroup, error: groupError } =
-          await supabase
-            .from("groups")
-            .select(
-              "id, name, code, created_by"
-            )
-            .eq("id", membership.group_id)
-            .single();
+        const {
+          data: foundGroup,
+          error: groupError,
+        } = await supabase
+          .from("groups")
+          .select("id, name, code, created_by")
+          .eq("id", membership.group_id)
+          .single();
 
         if (groupError || !foundGroup) {
           console.error(
@@ -145,11 +136,6 @@ export default function GroupPage() {
 
       setGroup(savedGroup);
 
-      /*
-        Load members and expenses.
-        Promise.all makes both requests together.
-      */
-
       await Promise.all([
         loadMembers(savedGroup.id),
         loadExpenses(savedGroup.id),
@@ -160,7 +146,6 @@ export default function GroupPage() {
         error
       );
     } finally {
-      // Always stop the loading screen.
       setLoading(false);
     }
   }
@@ -272,7 +257,6 @@ export default function GroupPage() {
       return;
     }
 
-    // Only expense creator can change payment status.
     if (expense.createdBy !== currentUserId) {
       alert(
         "Only the expense creator can change payment status."
@@ -289,6 +273,7 @@ export default function GroupPage() {
     }
 
     const newPaidStatus = !payment.paid;
+
     const paidAt = newPaidStatus
       ? new Date().toISOString()
       : null;
@@ -478,443 +463,364 @@ export default function GroupPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 p-8">
+    <>
+      <main className="min-h-screen bg-gray-100 p-8">
+        <div className="mx-auto max-w-4xl">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                {group.name}
+              </h1>
 
-      <div className="mx-auto max-w-4xl">
-
-        {/* Header */}
-
-        <div className="flex items-start justify-between gap-4">
-
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              {group.name}
-            </h1>
-
-            <p className="mt-2 text-gray-600">
-              Shared expense group
-            </p>
-          </div>
-
-          <button
-            type="button"
-            onClick={logout}
-            className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
-          >
-            Logout
-          </button>
-
-        </div>
-
-        {/* Group code */}
-
-        <div className="mt-4 rounded-lg bg-gray-100 p-4">
-
-          <p className="text-sm text-gray-600">
-            Group code
-          </p>
-
-          <p className="mt-1 text-xl font-bold tracking-wider text-black">
-            {group.code}
-          </p>
-
-        </div>
-
-        {/* Members */}
-
-        <div className="mt-8 rounded-xl bg-white p-6 shadow">
-
-          <h2 className="text-xl font-semibold text-gray-900">
-            Members
-          </h2>
-
-          <div className="mt-4 space-y-2 text-black">
-
-            {members.length === 0 ? (
-              <p className="text-gray-500">
-                No members found.
+              <p className="mt-2 text-gray-600">
+                Shared expense group
               </p>
-            ) : (
-              members.map((member) => (
-                <p key={member.user_id}>
-                  👤 {member.name}
-
-                  {member.user_id === currentUserId
-                    ? " (You)"
-                    : ""}
-                </p>
-              ))
-            )}
-
-          </div>
-
-        </div>
-
-        {/* Balances */}
-
-        <div className="mt-8 grid gap-6 md:grid-cols-2">
-
-          {/* Your balance */}
-
-          <div className="rounded-xl bg-white p-6 shadow">
-
-            <h2 className="text-xl font-semibold text-gray-900">
-              Your balance
-            </h2>
-
-            {myBalance > 0 ? (
-              <>
-                <p className="mt-4 text-sm text-gray-600">
-                  You should receive
-                </p>
-
-                <p className="mt-1 text-4xl font-bold text-green-600">
-                  €{myBalance.toFixed(2)}
-                </p>
-              </>
-            ) : myBalance < 0 ? (
-              <>
-                <p className="mt-4 text-sm text-gray-600">
-                  You need to pay
-                </p>
-
-                <p className="mt-1 text-4xl font-bold text-red-600">
-                  €{Math.abs(myBalance).toFixed(2)}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="mt-4 text-sm text-gray-600">
-                  You are settled
-                </p>
-
-                <p className="mt-1 text-4xl font-bold text-green-600">
-                  €0.00
-                </p>
-              </>
-            )}
-
-          </div>
-
-          {/* Group balances */}
-
-          <div className="rounded-xl bg-white p-6 shadow">
-
-            <h2 className="text-xl font-semibold text-gray-900">
-              Group balances
-            </h2>
-
-            <div className="mt-4 space-y-4">
-
-              {members.map((member) => {
-
-                const balance =
-                  balances[member.user_id] || 0;
-
-                return (
-                  <div
-                    key={member.user_id}
-                    className="flex justify-between"
-                  >
-
-                    <span className="font-medium text-gray-900">
-                      {member.name}
-                    </span>
-
-                    <span
-                      className={
-                        balance > 0
-                          ? "font-semibold text-green-600"
-                          : balance < 0
-                          ? "font-semibold text-red-600"
-                          : "font-semibold text-gray-500"
-                      }
-                    >
-                      {balance > 0 ? "+" : ""}
-                      €{balance.toFixed(2)}
-                    </span>
-
-                  </div>
-                );
-              })}
-
             </div>
-
-          </div>
-
-        </div>
-
-        {/* Expenses */}
-
-        <div className="mt-6 rounded-xl bg-white p-6 shadow">
-
-          <div className="flex items-center justify-between">
-
-            <h2 className="text-xl font-semibold text-gray-900">
-              Expenses
-            </h2>
 
             <button
               type="button"
-              onClick={() =>
-                router.push("/group/add-expense")
-              }
-              className="rounded-lg bg-black px-4 py-2 font-medium text-white hover:bg-gray-800"
+              onClick={logout}
+              className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
             >
-              + Add Expense
+              Logout
             </button>
-
           </div>
 
-          {expenses.length === 0 ? (
-            <p className="mt-4 text-gray-500">
-              No expenses added yet.
+          <div className="mt-4 rounded-lg bg-gray-100 p-4">
+            <p className="text-sm text-gray-600">
+              Group code
             </p>
-          ) : (
-            <div className="mt-5 space-y-4">
 
-              {expenses.map((expense) => (
+            <p className="mt-1 text-xl font-bold tracking-wider text-black">
+              {group.code}
+            </p>
+          </div>
 
-                <div
-                  key={expense.id}
-                  className="rounded-xl border border-gray-200 p-5"
-                >
+          <div className="mt-8 rounded-xl bg-white p-6 shadow">
+            <h2 className="text-xl font-semibold text-gray-900">
+              Members
+            </h2>
 
-                  {/* Expense header */}
+            <div className="mt-4 space-y-2 text-black">
+              {members.length === 0 ? (
+                <p className="text-gray-500">
+                  No members found.
+                </p>
+              ) : (
+                members.map((member) => (
+                  <p key={member.user_id}>
+                    👤 {member.name}
+                    {member.user_id === currentUserId
+                      ? " (You)"
+                      : ""}
+                  </p>
+                ))
+              )}
+            </div>
+          </div>
 
-                  <div className="flex items-center justify-between">
+          <div className="mt-8 grid gap-6 md:grid-cols-2">
+            <div className="rounded-xl bg-white p-6 shadow">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Your balance
+              </h2>
 
-                    <div>
-
-                      <h3 className="font-semibold text-gray-900">
-                        {expense.name}
-                      </h3>
-
-                      <p className="mt-1 text-sm text-gray-500">
-                        Paid by{" "}
-                        {getMemberName(
-                          expense.paidBy
-                        )}
-                      </p>
-
-                    </div>
-
-                    <p className="text-xl font-bold text-black">
-                      €{expense.amount.toFixed(2)}
-                    </p>
-
-                  </div>
-
-                  {/* Split */}
-
-                  <p className="mt-3 text-sm text-gray-600">
-                    Split between{" "}
-                    {expense.participants
-                      .map((userId) =>
-                        getMemberName(userId)
-                      )
-                      .join(", ")}
+              {myBalance > 0 ? (
+                <>
+                  <p className="mt-4 text-sm text-gray-600">
+                    You should receive
                   </p>
 
-                  {/* Payment status */}
+                  <p className="mt-1 text-4xl font-bold text-green-600">
+                    €{myBalance.toFixed(2)}
+                  </p>
+                </>
+              ) : myBalance < 0 ? (
+                <>
+                  <p className="mt-4 text-sm text-gray-600">
+                    You need to pay
+                  </p>
 
-                  <div className="mt-5">
+                  <p className="mt-1 text-4xl font-bold text-red-600">
+                    €{Math.abs(myBalance).toFixed(2)}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="mt-4 text-sm text-gray-600">
+                    You are settled
+                  </p>
 
-                    <p className="text-sm font-semibold text-gray-700">
-                      Payment status
-                    </p>
+                  <p className="mt-1 text-4xl font-bold text-green-600">
+                    €0.00
+                  </p>
+                </>
+              )}
+            </div>
 
-                    <div className="mt-3 space-y-2">
+            <div className="rounded-xl bg-white p-6 shadow">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Group balances
+              </h2>
 
-                      {expense.payments.map(
-                        (payment) => {
+              <div className="mt-4 space-y-4">
+                {members.map((member) => {
+                  const balance =
+                    balances[member.user_id] || 0;
 
-                          const memberName =
-                            getMemberName(
-                              payment.user_id
-                            );
+                  return (
+                    <div
+                      key={member.user_id}
+                      className="flex justify-between"
+                    >
+                      <span className="font-medium text-gray-900">
+                        {member.name}
+                      </span>
 
-                          const canEditPayment =
-                            expense.createdBy ===
-                              currentUserId &&
-                            !expense.closed;
-
-                          return (
-                            <div
-                              key={payment.user_id}
-                              className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
-                            >
-
-                              <span className="text-black">
-                                {memberName}
-                              </span>
-
-                              {canEditPayment ? (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    updatePayment(
-                                      expense.id,
-                                      payment.user_id
-                                    )
-                                  }
-                                  className={
-                                    payment.paid
-                                      ? "font-semibold text-green-600"
-                                      : "font-semibold text-red-600"
-                                  }
-                                >
-                                  {payment.paid
-                                    ? "✓ Paid"
-                                    : "✗ Unpaid"}
-                                </button>
-                              ) : (
-                                <span
-                                  className={
-                                    payment.paid
-                                      ? "font-semibold text-green-600"
-                                      : "font-semibold text-red-600"
-                                  }
-                                >
-                                  {payment.paid
-                                    ? "✓ Paid"
-                                    : "✗ Unpaid"}
-                                </span>
-                              )}
-
-                            </div>
-                          );
+                      <span
+                        className={
+                          balance > 0
+                            ? "font-semibold text-green-600"
+                            : balance < 0
+                            ? "font-semibold text-red-600"
+                            : "font-semibold text-gray-500"
                         }
-                      )}
-
-                    </div>
-
-                  </div>
-
-                  {/* Receipt */}
-
-                  {expense.receipt && (
-                    <div className="mt-5">
-
-                      <p className="text-sm font-semibold text-gray-700">
-                        Receipt
-                      </p>
-
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setSelectedReceipt(
-                            expense.receipt
-                          )
-                        }
-                        className="mt-2 block cursor-pointer"
                       >
-
-                        <img
-                          src={expense.receipt}
-                          alt="Receipt"
-                          className="max-h-64 max-w-xs rounded-lg border border-gray-200 object-contain transition hover:opacity-80"
-                        />
-
-                      </button>
-
+                        {balance > 0 ? "+" : ""}
+                        €{balance.toFixed(2)}
+                      </span>
                     </div>
-                  )}
+                  );
+                })}
+              </div>
+            </div>
+          </div>
 
-                  {/* Close expense */}
+          <div className="mt-6 rounded-xl bg-white p-6 shadow">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-semibold text-gray-900">
+                Expenses
+              </h2>
 
-                  {expense.createdBy ===
-                    currentUserId &&
-                    !expense.closed && (
-                      <button
-                        type="button"
-                        onClick={() =>
-                          closeExpense(
-                            expense.id
-                          )
-                        }
-                        className="mt-5 w-full rounded-lg bg-black px-4 py-3 font-medium text-white hover:bg-gray-800"
-                      >
-                        Close Expense
-                      </button>
-                    )}
+              <button
+                type="button"
+                onClick={() =>
+                  router.push("/group/add-expense")
+                }
+                className="rounded-lg bg-black px-4 py-2 font-medium text-white hover:bg-gray-800"
+              >
+                + Add Expense
+              </button>
+            </div>
 
-                  {/* Closed */}
+            {expenses.length === 0 ? (
+              <p className="mt-4 text-gray-500">
+                No expenses added yet.
+              </p>
+            ) : (
+              <div className="mt-5 space-y-4">
+                {expenses.map((expense) => (
+                  <div
+                    key={expense.id}
+                    className="rounded-xl border border-gray-200 p-5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="font-semibold text-gray-900">
+                          {expense.name}
+                        </h3>
 
-                  {expense.closed && (
-                    <div className="mt-5">
-
-                      <div className="rounded-lg bg-green-50 p-3 text-center font-semibold text-green-700">
-                        ✓ Expense closed
+                        <p className="mt-1 text-sm text-gray-500">
+                          Paid by{" "}
+                          {getMemberName(
+                            expense.paidBy
+                          )}
+                        </p>
                       </div>
 
-                      {expense.createdBy ===
-                        currentUserId && (
+                      <p className="text-xl font-bold text-black">
+                        €{expense.amount.toFixed(2)}
+                      </p>
+                    </div>
+
+                    <p className="mt-3 text-sm text-gray-600">
+                      Split between{" "}
+                      {expense.participants
+                        .map((userId) =>
+                          getMemberName(userId)
+                        )
+                        .join(", ")}
+                    </p>
+
+                    <div className="mt-5">
+                      <p className="text-sm font-semibold text-gray-700">
+                        Payment status
+                      </p>
+
+                      <div className="mt-3 space-y-2">
+                        {expense.payments.map(
+                          (payment) => {
+                            const memberName =
+                              getMemberName(
+                                payment.user_id
+                              );
+
+                            const canEditPayment =
+                              expense.createdBy ===
+                                currentUserId &&
+                              !expense.closed;
+
+                            return (
+                              <div
+                                key={payment.user_id}
+                                className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                              >
+                                <span className="text-black">
+                                  {memberName}
+                                </span>
+
+                                {canEditPayment ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      updatePayment(
+                                        expense.id,
+                                        payment.user_id
+                                      )
+                                    }
+                                    className={
+                                      payment.paid
+                                        ? "font-semibold text-green-600"
+                                        : "font-semibold text-red-600"
+                                    }
+                                  >
+                                    {payment.paid
+                                      ? "✓ Paid"
+                                      : "✗ Unpaid"}
+                                  </button>
+                                ) : (
+                                  <span
+                                    className={
+                                      payment.paid
+                                        ? "font-semibold text-green-600"
+                                        : "font-semibold text-red-600"
+                                    }
+                                  >
+                                    {payment.paid
+                                      ? "✓ Paid"
+                                      : "✗ Unpaid"}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          }
+                        )}
+                      </div>
+                    </div>
+
+                    {expense.receipt && (
+                      <div className="mt-5">
+                        <p className="text-sm font-semibold text-gray-700">
+                          Receipt
+                        </p>
+
                         <button
                           type="button"
                           onClick={() =>
-                            removeExpense(
+                            setSelectedReceipt(
+                              expense.receipt
+                            )
+                          }
+                          className="mt-2 block cursor-pointer"
+                        >
+                          <img
+                            src={expense.receipt}
+                            alt="Receipt"
+                            className="max-h-64 max-w-xs rounded-lg border border-gray-200 object-contain transition hover:opacity-80"
+                          />
+                        </button>
+                      </div>
+                    )}
+
+                    {expense.createdBy ===
+                      currentUserId &&
+                      !expense.closed && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            closeExpense(
                               expense.id
                             )
                           }
-                          className="mt-3 w-full rounded-lg border border-red-300 px-4 py-3 font-medium text-red-600 hover:bg-red-50"
+                          className="mt-5 w-full rounded-lg bg-black px-4 py-3 font-medium text-white hover:bg-gray-800"
                         >
-                          Remove Expense
+                          Close Expense
                         </button>
                       )}
 
-                    </div>
-                  )}
+                    {expense.closed && (
+                      <div className="mt-5">
+                        <div className="rounded-lg bg-green-50 p-3 text-center font-semibold text-green-700">
+                          ✓ Expense closed
+                        </div>
 
-                </div>
-
-              ))}
-
-            </div>
-          )}
-
+                        {expense.createdBy ===
+                          currentUserId && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              removeExpense(
+                                expense.id
+                              )
+                            }
+                            className="mt-3 w-full rounded-lg border border-red-300 px-4 py-3 font-medium text-red-600 hover:bg-red-50"
+                          >
+                            Remove Expense
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
 
-      </div>
-
-      {/* Enlarged receipt */}
-
-      {selectedReceipt && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() =>
-            setSelectedReceipt("")
-          }
-        >
-
+        {selectedReceipt && (
           <div
-            className="relative flex max-h-[95vh] max-w-[95vw] items-center justify-center"
-            onClick={(event) =>
-              event.stopPropagation()
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+            onClick={() =>
+              setSelectedReceipt("")
             }
           >
-
-            <button
-              type="button"
-              onClick={() =>
-                setSelectedReceipt("")
+            <div
+              className="relative flex max-h-[95vh] max-w-[95vw] items-center justify-center"
+              onClick={(event) =>
+                event.stopPropagation()
               }
-              className="absolute right-2 top-2 z-10 rounded-full bg-black/70 px-3 py-1 text-2xl font-bold text-white hover:bg-black"
             >
-              ×
-            </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setSelectedReceipt("")
+                }
+                className="absolute right-2 top-2 z-10 rounded-full bg-black/70 px-3 py-1 text-2xl font-bold text-white hover:bg-black"
+              >
+                ×
+              </button>
 
-            <img
-              src={selectedReceipt}
-              alt="Receipt enlarged"
-              className="max-h-[95vh] max-w-[95vw] rounded-lg object-contain"
-            />
-
+              <img
+                src={selectedReceipt}
+                alt="Receipt enlarged"
+                className="max-h-[95vh] max-w-[95vw] rounded-lg object-contain"
+              />
+            </div>
           </div>
+        )}
+      </main>
 
-        </div>
-      )}
-
-    </main>
+      <WelcomePopup />
+    </>
   );
 }
