@@ -68,77 +68,103 @@ export default function GroupPage() {
 
       setCurrentUserId(user.id);
 
-      let savedGroup: Group | null = null;
-
+      /*
+       * The selected group must come from activeGroup.
+       *
+       * We no longer automatically choose the first group.
+       * This is important now that one account can belong
+       * to multiple groups.
+       */
       const storedGroup =
         localStorage.getItem("activeGroup");
 
-      if (storedGroup) {
-        try {
-          const parsed = JSON.parse(storedGroup);
+      if (!storedGroup) {
+        router.replace("/");
+        return;
+      }
 
-          if (parsed?.id) {
-            savedGroup = parsed;
-          }
-        } catch {
-          localStorage.removeItem("activeGroup");
+      let savedGroup: Group | null = null;
+
+      try {
+        const parsed = JSON.parse(storedGroup);
+
+        if (parsed?.id) {
+          savedGroup = parsed;
         }
+      } catch {
+        localStorage.removeItem("activeGroup");
+        router.replace("/");
+        return;
       }
 
       if (!savedGroup) {
-        const {
-          data: membership,
-          error: membershipError,
-        } = await supabase
-          .from("group_members")
-          .select("group_id")
-          .eq("user_id", user.id)
-          .limit(1)
-          .maybeSingle();
-
-        if (membershipError) {
-          console.error(
-            "Error finding group membership:",
-            membershipError
-          );
-          return;
-        }
-
-        if (!membership?.group_id) {
-          router.replace("/");
-          return;
-        }
-
-        const {
-          data: foundGroup,
-          error: groupError,
-        } = await supabase
-          .from("groups")
-          .select("id, name, code, created_by")
-          .eq("id", membership.group_id)
-          .single();
-
-        if (groupError || !foundGroup) {
-          console.error(
-            "Error loading group:",
-            groupError
-          );
-          return;
-        }
-
-        savedGroup = foundGroup;
-
-        localStorage.setItem(
-          "activeGroup",
-          JSON.stringify(foundGroup)
-        );
+        localStorage.removeItem("activeGroup");
+        router.replace("/");
+        return;
       }
 
-      setGroup(savedGroup);
+      /*
+       * Verify that the current user actually belongs
+       * to this selected group.
+       */
+      const { data: membership, error: membershipError } =
+        await supabase
+          .from("group_members")
+          .select("group_id")
+          .eq("group_id", savedGroup.id)
+          .eq("user_id", user.id)
+          .maybeSingle();
+
+      if (membershipError) {
+        console.error(
+          "Error checking group membership:",
+          membershipError
+        );
+
+        localStorage.removeItem("activeGroup");
+        router.replace("/");
+        return;
+      }
+
+      if (!membership) {
+        localStorage.removeItem("activeGroup");
+        router.replace("/");
+        return;
+      }
+
+      /*
+       * Get the latest group information from Supabase.
+       */
+      const {
+        data: foundGroup,
+        error: groupError,
+      } = await supabase
+        .from("groups")
+        .select("id, name, code, created_by")
+        .eq("id", savedGroup.id)
+        .single();
+
+      if (groupError || !foundGroup) {
+        console.error(
+          "Error loading group:",
+          groupError
+        );
+
+        localStorage.removeItem("activeGroup");
+        router.replace("/");
+        return;
+      }
+
+      localStorage.setItem(
+        "activeGroup",
+        JSON.stringify(foundGroup)
+      );
+
+      setGroup(foundGroup);
 
       await Promise.all([
-        loadMembers(savedGroup.id),
-        loadExpenses(savedGroup.id),
+        loadMembers(foundGroup.id),
+        loadExpenses(foundGroup.id),
       ]);
     } catch (error) {
       console.error(
@@ -411,6 +437,11 @@ export default function GroupPage() {
     router.replace("/auth");
   }
 
+  function switchGroups() {
+    localStorage.removeItem("activeGroup");
+    router.push("/");
+  }
+
   function calculateBalances() {
     const balances: Record<string, number> = {};
 
@@ -466,6 +497,9 @@ export default function GroupPage() {
     <>
       <main className="min-h-screen bg-gray-100 p-8">
         <div className="mx-auto max-w-4xl">
+
+          {/* Header */}
+
           <div className="flex items-start justify-between gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900">
@@ -477,14 +511,26 @@ export default function GroupPage() {
               </p>
             </div>
 
-            <button
-              type="button"
-              onClick={logout}
-              className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
-            >
-              Logout
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={switchGroups}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 font-medium text-gray-800 hover:bg-gray-50"
+              >
+                Switch Groups
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
+              >
+                Logout
+              </button>
+            </div>
           </div>
+
+          {/* Group code */}
 
           <div className="mt-4 rounded-lg bg-gray-100 p-4">
             <p className="text-sm text-gray-600">
@@ -495,6 +541,8 @@ export default function GroupPage() {
               {group.code}
             </p>
           </div>
+
+          {/* Members */}
 
           <div className="mt-8 rounded-xl bg-white p-6 shadow">
             <h2 className="text-xl font-semibold text-gray-900">
@@ -519,7 +567,10 @@ export default function GroupPage() {
             </div>
           </div>
 
+          {/* Balances */}
+
           <div className="mt-8 grid gap-6 md:grid-cols-2">
+
             <div className="rounded-xl bg-white p-6 shadow">
               <h2 className="text-xl font-semibold text-gray-900">
                 Your balance
@@ -595,6 +646,8 @@ export default function GroupPage() {
               </div>
             </div>
           </div>
+
+          {/* Expenses */}
 
           <div className="mt-6 rounded-xl bg-white p-6 shadow">
             <div className="flex items-center justify-between">
@@ -718,6 +771,8 @@ export default function GroupPage() {
                       </div>
                     </div>
 
+                    {/* Receipt */}
+
                     {expense.receipt && (
                       <div className="mt-5">
                         <p className="text-sm font-semibold text-gray-700">
@@ -742,6 +797,8 @@ export default function GroupPage() {
                       </div>
                     )}
 
+                    {/* Close expense */}
+
                     {expense.createdBy ===
                       currentUserId &&
                       !expense.closed && (
@@ -757,6 +814,8 @@ export default function GroupPage() {
                           Close Expense
                         </button>
                       )}
+
+                    {/* Closed expense */}
 
                     {expense.closed && (
                       <div className="mt-5">
@@ -786,6 +845,8 @@ export default function GroupPage() {
             )}
           </div>
         </div>
+
+        {/* Receipt viewer */}
 
         {selectedReceipt && (
           <div

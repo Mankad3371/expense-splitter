@@ -4,13 +4,23 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
+type Group = {
+  id: string;
+  name: string;
+  code: string;
+  created_by: string;
+};
+
 export default function Home() {
   const router = useRouter();
   const supabase = createClient();
 
+  const [groups, setGroups] = useState<Group[]>([]);
+
   const [groupName, setGroupName] = useState("");
   const [groupCode, setGroupCode] = useState("");
-  const [memberName, setMemberName] = useState("Manthan");
+  const [memberName, setMemberName] =
+    useState("Manthan");
 
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -18,91 +28,128 @@ export default function Home() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    checkUserAndGroup();
+    loadGroups();
   }, []);
 
-  async function checkUserAndGroup() {
+  async function loadGroups() {
     setLoading(true);
 
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    // Not logged in
     if (!user) {
       router.replace("/auth");
       return;
     }
 
-    // Find groups this user belongs to.
-    const { data: memberships, error } = await supabase
+    const {
+      data: memberships,
+      error: membershipError,
+    } = await supabase
       .from("group_members")
       .select("group_id")
       .eq("user_id", user.id);
 
-    if (error) {
+    if (membershipError) {
       console.error(
-        "Error checking group membership:",
-        error
+        "Error loading memberships:",
+        membershipError
+      );
+
+      setMessage(
+        "Could not load your groups."
       );
 
       setLoading(false);
       return;
     }
 
-    // User already belongs to a group.
-    if (memberships && memberships.length > 0) {
-      const groupId = memberships[0].group_id;
-
-      const { data: group, error: groupError } =
-        await supabase
-          .from("groups")
-          .select("id, name, code, created_by")
-          .eq("id", groupId)
-          .single();
-
-      if (groupError) {
-        console.error(
-          "Error loading group:",
-          groupError
-        );
-
-        setLoading(false);
-        return;
-      }
-
-      if (group) {
-        // Save it locally too, but don't depend on it.
-        localStorage.setItem(
-          "activeGroup",
-          JSON.stringify(group)
-        );
-
-        router.replace("/group");
-        return;
-      }
+    if (
+      !memberships ||
+      memberships.length === 0
+    ) {
+      setGroups([]);
+      setLoading(false);
+      return;
     }
 
-    // Logged in but not a member of any group.
+    const groupIds = memberships.map(
+      (membership) =>
+        membership.group_id
+    );
+
+    const {
+      data: loadedGroups,
+      error: groupsError,
+    } = await supabase
+      .from("groups")
+      .select(
+        "id, name, code, created_by"
+      )
+      .in("id", groupIds)
+      .order("created_at", {
+        ascending: true,
+      });
+
+    if (groupsError) {
+      console.error(
+        "Error loading groups:",
+        groupsError
+      );
+
+      setMessage(
+        "Could not load your groups."
+      );
+
+      setLoading(false);
+      return;
+    }
+
+    setGroups(loadedGroups || []);
     setLoading(false);
+  }
+
+  function openGroup(group: Group) {
+    localStorage.setItem(
+      "activeGroup",
+      JSON.stringify(group)
+    );
+
+    router.push("/group");
   }
 
   async function createGroup() {
     setMessage("");
 
     if (!groupName.trim()) {
-      setMessage("Please enter a group name.");
+      setMessage(
+        "Please enter a group name."
+      );
+      return;
+    }
+
+    if (!memberName.trim()) {
+      setMessage(
+        "Please enter your name."
+      );
       return;
     }
 
     setCreating(true);
 
-    const { data, error } =
-      await supabase.rpc("create_group", {
-        group_name: groupName.trim(),
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "create_group",
+      {
+        group_name:
+          groupName.trim(),
         member_name:
-          memberName.trim() || "Member",
-      });
+          memberName.trim(),
+      }
+    );
 
     setCreating(false);
 
@@ -112,34 +159,50 @@ export default function Home() {
     }
 
     if (!data) {
-      setMessage("Group could not be created.");
+      setMessage(
+        "Group could not be created."
+      );
       return;
     }
 
-    localStorage.setItem(
-      "activeGroup",
-      JSON.stringify(data)
-    );
+    setGroupName("");
 
-    router.replace("/group");
+    await loadGroups();
+
+    openGroup(data);
   }
 
   async function joinGroup() {
     setMessage("");
 
     if (!groupCode.trim()) {
-      setMessage("Please enter a group code.");
+      setMessage(
+        "Please enter a group code."
+      );
+      return;
+    }
+
+    if (!memberName.trim()) {
+      setMessage(
+        "Please enter your name."
+      );
       return;
     }
 
     setJoining(true);
 
-    const { data, error } =
-      await supabase.rpc("join_group", {
-        group_code: groupCode.trim(),
+    const {
+      data,
+      error,
+    } = await supabase.rpc(
+      "join_group",
+      {
+        group_code:
+          groupCode.trim(),
         member_name:
-          memberName.trim() || "Member",
-      });
+          memberName.trim(),
+      }
+    );
 
     setJoining(false);
 
@@ -149,23 +212,34 @@ export default function Home() {
     }
 
     if (!data) {
-      setMessage("Could not join the group.");
+      setMessage(
+        "Could not join the group."
+      );
       return;
     }
 
-    localStorage.setItem(
-      "activeGroup",
-      JSON.stringify(data)
+    setGroupCode("");
+
+    await loadGroups();
+
+    openGroup(data);
+  }
+
+  async function logout() {
+    await supabase.auth.signOut();
+
+    localStorage.removeItem(
+      "activeGroup"
     );
 
-    router.replace("/group");
+    router.replace("/auth");
   }
 
   if (loading) {
     return (
       <main className="flex min-h-screen items-center justify-center bg-gray-100">
         <p className="text-gray-600">
-          Checking your account...
+          Loading your groups...
         </p>
       </main>
     );
@@ -173,21 +247,33 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-gray-100 p-8">
+      <div className="mx-auto max-w-4xl">
 
-      <div className="mx-auto max-w-2xl">
+        {/* Header */}
 
-        <h1 className="text-3xl font-bold text-gray-900">
-          Expense Splitter
-        </h1>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">
+              Expense Splitter
+            </h1>
 
-        <p className="mt-2 text-gray-600">
-          Share expenses with your friends easily.
-        </p>
+            <p className="mt-2 text-gray-600">
+              Manage your shared expenses.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
+          >
+            Logout
+          </button>
+        </div>
 
         {/* Your name */}
 
         <div className="mt-8 rounded-xl bg-white p-6 shadow">
-
           <label className="block text-sm font-medium text-gray-700">
             Your name
           </label>
@@ -196,32 +282,104 @@ export default function Home() {
             type="text"
             value={memberName}
             onChange={(e) =>
-              setMemberName(e.target.value)
+              setMemberName(
+                e.target.value
+              )
             }
             className="mt-2 w-full rounded-lg border border-gray-300 p-3 text-black"
           />
-
         </div>
+
+        {/* Your Groups */}
+
+        <div className="mt-8 rounded-xl bg-white p-6 shadow">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">
+                My Groups
+              </h2>
+
+              <p className="mt-1 text-sm text-gray-600">
+                Choose a group to open.
+              </p>
+            </div>
+
+            <span className="rounded-full bg-gray-100 px-3 py-1 text-sm font-medium text-gray-700">
+              {groups.length}
+              {groups.length === 1
+                ? " group"
+                : " groups"}
+            </span>
+          </div>
+
+          {groups.length === 0 ? (
+            <div className="mt-6 rounded-lg border border-dashed border-gray-300 p-6 text-center">
+              <p className="font-medium text-gray-900">
+                You are not in any groups yet.
+              </p>
+
+              <p className="mt-1 text-sm text-gray-500">
+                Create a group or join one
+                using a group code below.
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5 grid gap-4 sm:grid-cols-2">
+              {groups.map((group) => (
+                <div
+                  key={group.id}
+                  className="rounded-xl border border-gray-200 p-5"
+                >
+                  <h3 className="text-lg font-semibold text-gray-900">
+                    🏠 {group.name}
+                  </h3>
+
+                  <p className="mt-2 text-sm text-gray-500">
+                    Group code
+                  </p>
+
+                  <p className="mt-1 font-bold tracking-wider text-gray-900">
+                    {group.code}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openGroup(group)
+                    }
+                    className="mt-4 w-full rounded-lg bg-black px-4 py-3 font-medium text-white hover:bg-gray-800"
+                  >
+                    Open Group
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Create + Join */}
 
         <div className="mt-6 grid gap-6 md:grid-cols-2">
 
           {/* Create Group */}
 
           <div className="rounded-xl bg-white p-6 shadow">
-
             <h2 className="text-xl font-semibold text-gray-900">
               Create a Group
             </h2>
 
             <p className="mt-2 text-sm text-gray-600">
-              Create a group and invite your friends.
+              Create another group and
+              invite your friends.
             </p>
 
             <input
               type="text"
               value={groupName}
               onChange={(e) =>
-                setGroupName(e.target.value)
+                setGroupName(
+                  e.target.value
+                )
               }
               placeholder="e.g. Imperia Flat"
               className="mt-4 w-full rounded-lg border border-gray-300 p-3 text-black"
@@ -237,19 +395,18 @@ export default function Home() {
                 ? "Creating..."
                 : "Create Group"}
             </button>
-
           </div>
 
           {/* Join Group */}
 
           <div className="rounded-xl bg-white p-6 shadow">
-
             <h2 className="text-xl font-semibold text-gray-900">
               Join a Group
             </h2>
 
             <p className="mt-2 text-sm text-gray-600">
-              Enter a group code shared by your friend.
+              Enter a group code shared
+              by your friend.
             </p>
 
             <input
@@ -274,10 +431,11 @@ export default function Home() {
                 ? "Joining..."
                 : "Join Group"}
             </button>
-
           </div>
 
         </div>
+
+        {/* Message */}
 
         {message && (
           <p className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">
@@ -286,7 +444,6 @@ export default function Home() {
         )}
 
       </div>
-
     </main>
   );
 }
