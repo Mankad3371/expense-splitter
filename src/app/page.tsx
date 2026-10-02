@@ -25,6 +25,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
@@ -48,7 +49,7 @@ export default function Home() {
       error: membershipError,
     } = await supabase
       .from("group_members")
-      .select("group_id")
+      .select("group_id, name")
       .eq("user_id", user.id);
 
     if (membershipError) {
@@ -72,6 +73,14 @@ export default function Home() {
       setGroups([]);
       setLoading(false);
       return;
+    }
+
+    /*
+     * Use the user's name from their existing
+     * membership if available.
+     */
+    if (memberships[0]?.name) {
+      setMemberName(memberships[0].name);
     }
 
     const groupIds = memberships.map(
@@ -225,14 +234,179 @@ export default function Home() {
     openGroup(data);
   }
 
-  async function logout() {
-    await supabase.auth.signOut();
+  /*
+   * Check unpaid debt across ALL groups
+   * before allowing logout.
+   */
+  async function getTotalUnpaidDebt() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    localStorage.removeItem(
-      "activeGroup"
+    if (!user) {
+      return 0;
+    }
+
+    const {
+      data: memberships,
+      error: membershipError,
+    } = await supabase
+      .from("group_members")
+      .select("group_id")
+      .eq("user_id", user.id);
+
+    if (membershipError) {
+      console.error(
+        "Error checking group memberships:",
+        membershipError
+      );
+
+      throw new Error(
+        "Could not check your balances."
+      );
+    }
+
+    if (
+      !memberships ||
+      memberships.length === 0
+    ) {
+      return 0;
+    }
+
+    const groupIds = memberships.map(
+      (membership) =>
+        membership.group_id
     );
 
-    router.replace("/auth");
+    const {
+      data: expenses,
+      error: expenseError,
+    } = await supabase
+      .from("expenses")
+      .select(`
+        id,
+        group_id,
+        paid_by,
+        closed,
+        expense_payments (
+          user_id,
+          amount,
+          paid
+        )
+      `)
+      .in("group_id", groupIds);
+
+    if (expenseError) {
+      console.error(
+        "Error checking expenses:",
+        expenseError
+      );
+
+      throw new Error(
+        "Could not check your balances."
+      );
+    }
+
+    let totalDebt = 0;
+
+    (expenses || []).forEach(
+      (expense: any) => {
+        /*
+         * Closed expenses don't count.
+         */
+        if (expense.closed) {
+          return;
+        }
+
+        /*
+         * Find this user's unpaid payment.
+         */
+        (expense.expense_payments || []).forEach(
+          (payment: any) => {
+            if (
+              payment.user_id === user.id &&
+              payment.user_id !==
+                expense.paid_by &&
+              !payment.paid
+            ) {
+              totalDebt += Number(
+                payment.amount
+              );
+            }
+          }
+        );
+      }
+    );
+
+    return totalDebt;
+  }
+
+  async function logout() {
+    setMessage("");
+
+    try {
+      setLoggingOut(true);
+
+      const totalDebt =
+        await getTotalUnpaidDebt();
+
+      if (totalDebt > 0) {
+        setLoggingOut(false);
+
+        setMessage(
+          `You cannot logout because you still owe €${totalDebt.toFixed(
+            2
+          )}. Please settle your unpaid expenses first.`
+        );
+
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Are you sure you want to logout?"
+      );
+
+      if (!confirmed) {
+        setLoggingOut(false);
+        return;
+      }
+
+      const { error } =
+        await supabase.auth.signOut();
+
+      if (error) {
+        console.error(
+          "Logout error:",
+          error
+        );
+
+        setMessage(
+          "Could not logout. Please try again."
+        );
+
+        setLoggingOut(false);
+        return;
+      }
+
+      localStorage.removeItem(
+        "activeGroup"
+      );
+
+      router.replace("/auth");
+    } catch (error) {
+      console.error(
+        "Logout check error:",
+        error
+      );
+
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not check your balances."
+      );
+
+      setLoggingOut(false);
+    }
   }
 
   if (loading) {
@@ -265,9 +439,12 @@ export default function Home() {
           <button
             type="button"
             onClick={logout}
-            className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
+            disabled={loggingOut}
+            className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
           >
-            Logout
+            {loggingOut
+              ? "Checking..."
+              : "Logout"}
           </button>
         </div>
 
@@ -290,7 +467,7 @@ export default function Home() {
           />
         </div>
 
-        {/* Your Groups */}
+        {/* My Groups */}
 
         <div className="mt-8 rounded-xl bg-white p-6 shadow">
           <div className="flex items-center justify-between">
@@ -432,7 +609,6 @@ export default function Home() {
                 : "Join Group"}
             </button>
           </div>
-
         </div>
 
         {/* Message */}
@@ -442,7 +618,6 @@ export default function Home() {
             {message}
           </p>
         )}
-
       </div>
     </main>
   );

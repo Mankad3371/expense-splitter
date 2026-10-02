@@ -47,6 +47,9 @@ export default function GroupPage() {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReceipt, setSelectedReceipt] = useState("");
+  const [leaving, setLeaving] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [actionMessage, setActionMessage] = useState("");
 
   useEffect(() => {
     initializePage();
@@ -68,13 +71,6 @@ export default function GroupPage() {
 
       setCurrentUserId(user.id);
 
-      /*
-       * The selected group must come from activeGroup.
-       *
-       * We no longer automatically choose the first group.
-       * This is important now that one account can belong
-       * to multiple groups.
-       */
       const storedGroup =
         localStorage.getItem("activeGroup");
 
@@ -103,17 +99,15 @@ export default function GroupPage() {
         return;
       }
 
-      /*
-       * Verify that the current user actually belongs
-       * to this selected group.
-       */
-      const { data: membership, error: membershipError } =
-        await supabase
-          .from("group_members")
-          .select("group_id")
-          .eq("group_id", savedGroup.id)
-          .eq("user_id", user.id)
-          .maybeSingle();
+      const {
+        data: membership,
+        error: membershipError,
+      } = await supabase
+        .from("group_members")
+        .select("group_id")
+        .eq("group_id", savedGroup.id)
+        .eq("user_id", user.id)
+        .maybeSingle();
 
       if (membershipError) {
         console.error(
@@ -132,9 +126,6 @@ export default function GroupPage() {
         return;
       }
 
-      /*
-       * Get the latest group information from Supabase.
-       */
       const {
         data: foundGroup,
         error: groupError,
@@ -265,6 +256,28 @@ export default function GroupPage() {
     );
 
     return member?.name || "Unknown";
+  }
+
+  function getMyUnpaidDebt() {
+    let totalDebt = 0;
+
+    expenses.forEach((expense) => {
+      if (expense.closed) {
+        return;
+      }
+
+      expense.payments.forEach((payment) => {
+        if (
+          payment.user_id === currentUserId &&
+          payment.user_id !== expense.paidBy &&
+          !payment.paid
+        ) {
+          totalDebt += payment.amount;
+        }
+      });
+    });
+
+    return totalDebt;
   }
 
   async function updatePayment(
@@ -429,8 +442,89 @@ export default function GroupPage() {
     );
   }
 
+  async function leaveGroup() {
+    if (!group) {
+      return;
+    }
+
+    setActionMessage("");
+
+    const debt = getMyUnpaidDebt();
+
+    if (debt > 0) {
+      setActionMessage(
+        `You cannot leave this group because you still owe €${debt.toFixed(
+          2
+        )}. Please settle your unpaid expenses first.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Are you sure you want to leave "${group.name}"?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setLeaving(true);
+
+    const { error } = await supabase.rpc(
+      "leave_group",
+      {
+        target_group_id: group.id,
+      }
+    );
+
+    setLeaving(false);
+
+    if (error) {
+      setActionMessage(error.message);
+      return;
+    }
+
+    localStorage.removeItem("activeGroup");
+
+    router.replace("/");
+  }
+
   async function logout() {
-    await supabase.auth.signOut();
+    setActionMessage("");
+
+    const debt = getMyUnpaidDebt();
+
+    if (debt > 0) {
+      setActionMessage(
+        `You cannot logout because you still owe €${debt.toFixed(
+          2
+        )} in this group. Please settle your unpaid expenses first.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Are you sure you want to logout?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setLoggingOut(true);
+
+    const { error } =
+      await supabase.auth.signOut();
+
+    if (error) {
+      setLoggingOut(false);
+
+      setActionMessage(
+        "Could not logout. Please try again."
+      );
+
+      return;
+    }
 
     localStorage.removeItem("activeGroup");
 
@@ -438,6 +532,7 @@ export default function GroupPage() {
   }
 
   function switchGroups() {
+    setActionMessage("");
     localStorage.removeItem("activeGroup");
     router.push("/");
   }
@@ -511,7 +606,7 @@ export default function GroupPage() {
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={switchGroups}
@@ -522,13 +617,35 @@ export default function GroupPage() {
 
               <button
                 type="button"
-                onClick={logout}
-                className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50"
+                onClick={leaveGroup}
+                disabled={leaving}
+                className="rounded-lg border border-red-300 bg-white px-4 py-2 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
               >
-                Logout
+                {leaving
+                  ? "Leaving..."
+                  : "Leave Group"}
+              </button>
+
+              <button
+                type="button"
+                onClick={logout}
+                disabled={loggingOut}
+                className="rounded-lg border border-red-300 px-4 py-2 font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+              >
+                {loggingOut
+                  ? "Logging out..."
+                  : "Logout"}
               </button>
             </div>
           </div>
+
+          {/* Action error */}
+
+          {actionMessage && (
+            <div className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-600">
+              {actionMessage}
+            </div>
+          )}
 
           {/* Group code */}
 
