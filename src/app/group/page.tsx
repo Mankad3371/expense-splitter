@@ -30,6 +30,14 @@ type Expense = {
   createdAt: string;
 };
 
+type Settlement = {
+  id: string;
+  from_user_id: string;
+  to_user_id: string;
+  amount: number;
+  created_at: string;
+};
+
 type Group = {
   id: string;
   name: string;
@@ -45,11 +53,16 @@ export default function GroupPage() {
   const [members, setMembers] = useState<Member[]>([]);
   const [currentUserId, setCurrentUserId] = useState("");
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedReceipt, setSelectedReceipt] = useState("");
   const [leaving, setLeaving] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [actionMessage, setActionMessage] = useState("");
+  const [settlementDebtorId, setSettlementDebtorId] = useState<string | null>(null);
+  const [settlementAmount, setSettlementAmount] = useState("");
+  const [settlementMessage, setSettlementMessage] = useState("");
+  const [recordingSettlement, setRecordingSettlement] = useState(false);
 
   useEffect(() => {
     initializePage();
@@ -156,6 +169,7 @@ export default function GroupPage() {
       await Promise.all([
         loadMembers(foundGroup.id),
         loadExpenses(foundGroup.id),
+        loadSettlements(foundGroup.id),
       ]);
     } catch (error) {
       console.error(
@@ -250,6 +264,29 @@ export default function GroupPage() {
     setExpenses(loadedExpenses);
   }
 
+  async function loadSettlements(groupId: string) {
+    const { data, error } = await supabase
+      .from("settlements")
+      .select("id, from_user_id, to_user_id, amount, created_at")
+      .eq("group_id", groupId)
+      .order("created_at", { ascending: false });
+
+    if (error) {
+      console.error("Error loading settlements:", error);
+      return;
+    }
+
+    setSettlements(
+      (data || []).map((settlement: any) => ({
+        id: settlement.id,
+        from_user_id: settlement.from_user_id,
+        to_user_id: settlement.to_user_id,
+        amount: Number(settlement.amount),
+        created_at: settlement.created_at,
+      }))
+    );
+  }
+
   function getMemberName(userId: string) {
     const member = members.find(
       (item) => item.user_id === userId
@@ -258,8 +295,25 @@ export default function GroupPage() {
     return member?.name || "Unknown";
   }
 
-  function getMyUnpaidDebt() {
-    let totalDebt = 0;
+  function calculateOutstandingDebts() {
+    const debts: Record<string, Record<string, number>> = {};
+
+    function addDebt(
+      debtorId: string,
+      creditorId: string,
+      amount: number
+    ) {
+      if (debtorId === creditorId) {
+        return;
+      }
+
+      if (!debts[debtorId]) {
+        debts[debtorId] = {};
+      }
+
+      debts[debtorId][creditorId] =
+        (debts[debtorId][creditorId] || 0) + amount;
+    }
 
     expenses.forEach((expense) => {
       if (expense.closed) {
@@ -267,17 +321,115 @@ export default function GroupPage() {
       }
 
       expense.payments.forEach((payment) => {
-        if (
-          payment.user_id === currentUserId &&
-          payment.user_id !== expense.paidBy &&
-          !payment.paid
-        ) {
-          totalDebt += payment.amount;
+        if (payment.user_id === expense.paidBy || payment.paid) {
+          return;
         }
+
+        addDebt(
+          payment.user_id,
+          expense.paidBy,
+          payment.amount
+        );
       });
     });
 
-    return totalDebt;
+    settlements.forEach((settlement) => {
+      if (!debts[settlement.from_user_id]) {
+        debts[settlement.from_user_id] = {};
+      }
+
+      debts[settlement.from_user_id][settlement.to_user_id] =
+        (debts[settlement.from_user_id][settlement.to_user_id] || 0) -
+        settlement.amount;
+    });
+
+    Object.keys(debts).forEach((debtorId) => {
+      Object.keys(debts[debtorId]).forEach((creditorId) => {
+        const amount = debts[debtorId][creditorId];
+
+        debts[debtorId][creditorId] =
+          amount > 0.005
+            ? Math.round(amount * 100) / 100
+            : 0;
+      });
+    });
+
+    return debts;
+  }
+
+  function getMyUnpaidDebt() {
+    const debts = calculateOutstandingDebts();
+
+    if (!currentUserId || !debts[currentUserId]) {
+      return 0;
+    }
+
+    return Object.values(debts[currentUserId]).reduce(
+      (total, amount) => total + Math.max(amount, 0),
+      0
+    );
+  }
+
+  function getDebtToMe(userId: string) {
+    const debts = calculateOutstandingDebts();
+
+    return Math.max(
+      debts[userId]?.[currentUserId] || 0,
+      0
+    );
+  }
+
+  async function recordSettlement() {
+    if (!group || !settlementDebtorId) {
+      return;
+    }
+
+    setSettlementMessage("");
+
+    const amount = Number(settlementAmount);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setSettlementMessage("Enter a valid payment amount.");
+      return;
+    }
+
+    const outstanding = getDebtToMe(settlementDebtorId);
+
+    if (outstanding <= 0) {
+      setSettlementMessage(
+        "This person currently has no outstanding debt to you."
+      );
+      return;
+    }
+
+    if (amount > outstanding + 0.001) {
+      setSettlementMessage(
+        `The payment cannot be more than €${outstanding.toFixed(2)}.`
+      );
+      return;
+    }
+
+    setRecordingSettlement(true);
+
+    const { error } = await supabase.rpc("record_settlement", {
+      target_group_id: group.id,
+      debtor_id: settlementDebtorId,
+      creditor_id: currentUserId,
+      settlement_amount: Number(amount.toFixed(2)),
+    });
+
+    setRecordingSettlement(false);
+
+    if (error) {
+      setSettlementMessage(error.message);
+      return;
+    }
+
+    setSettlementDebtorId(null);
+    setSettlementAmount("");
+    setSettlementMessage("");
+
+    await loadSettlements(group.id);
   }
 
   async function updatePayment(
@@ -539,30 +691,23 @@ export default function GroupPage() {
 
   function calculateBalances() {
     const balances: Record<string, number> = {};
+    const debts = calculateOutstandingDebts();
 
     members.forEach((member) => {
       balances[member.user_id] = 0;
     });
 
-    expenses.forEach((expense) => {
-      if (expense.closed) {
-        return;
-      }
-
-      expense.payments.forEach((payment) => {
-        if (payment.user_id === expense.paidBy) {
+    Object.entries(debts).forEach(([debtorId, creditors]) => {
+      Object.entries(creditors).forEach(([creditorId, amount]) => {
+        if (amount <= 0) {
           return;
         }
 
-        if (!payment.paid) {
-          balances[expense.paidBy] =
-            (balances[expense.paidBy] || 0) +
-            payment.amount;
+        balances[debtorId] =
+          (balances[debtorId] || 0) - amount;
 
-          balances[payment.user_id] =
-            (balances[payment.user_id] || 0) -
-            payment.amount;
-        }
+        balances[creditorId] =
+          (balances[creditorId] || 0) + amount;
       });
     });
 
@@ -672,16 +817,104 @@ export default function GroupPage() {
                   No members found.
                 </p>
               ) : (
-                members.map((member) => (
-                  <p key={member.user_id}>
-                    👤 {member.name}
-                    {member.user_id === currentUserId
-                      ? " (You)"
-                      : ""}
-                  </p>
-                ))
+                members.map((member) => {
+                  const debtToMe = getDebtToMe(member.user_id);
+
+                  return (
+                    <div
+                      key={member.user_id}
+                      className="flex items-center justify-between gap-3"
+                    >
+                      <p>
+                        👤 {member.name}
+                        {member.user_id === currentUserId
+                          ? " (You)"
+                          : ""}
+                      </p>
+
+                      {member.user_id !== currentUserId &&
+                        debtToMe > 0.005 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSettlementDebtorId(member.user_id);
+                              setSettlementAmount("");
+                              setSettlementMessage("");
+                            }}
+                            className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-800"
+                          >
+                            Record Payment
+                          </button>
+                        )}
+                    </div>
+                  );
+                })
               )}
             </div>
+
+            {settlementDebtorId && (
+              <div className="mt-5 rounded-lg bg-gray-50 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-900">
+                      Record Payment
+                    </p>
+                    <p className="mt-1 text-sm text-gray-600">
+                      {getMemberName(settlementDebtorId)} owes you €
+                      {getDebtToMe(settlementDebtorId).toFixed(2)}
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettlementDebtorId(null);
+                      setSettlementAmount("");
+                      setSettlementMessage("");
+                    }}
+                    className="text-sm text-gray-500 hover:text-gray-900"
+                  >
+                    Cancel
+                  </button>
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <div className="relative flex-1">
+                    <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
+                      €
+                    </span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      step="0.01"
+                      value={settlementAmount}
+                      onChange={(event) =>
+                        setSettlementAmount(event.target.value)
+                      }
+                      placeholder="Amount received"
+                      className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-8 pr-3 text-gray-900 outline-none focus:border-black"
+                    />
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={recordSettlement}
+                    disabled={recordingSettlement}
+                    className="rounded-lg bg-black px-4 py-2 font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                  >
+                    {recordingSettlement
+                      ? "Recording..."
+                      : "Record"}
+                  </button>
+                </div>
+
+                {settlementMessage && (
+                  <p className="mt-2 text-sm text-red-600">
+                    {settlementMessage}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Balances */}
