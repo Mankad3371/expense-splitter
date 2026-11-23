@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://expense-splitter-roan-omega.vercel.app/sitemap.xml
+Sitemap: https://expense-splitter-roan-omega.vercel.app/sitemap.xm
