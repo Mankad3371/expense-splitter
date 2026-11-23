@@ -16,6 +16,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Expense Splitter",
   description: "Split expenses with your group",
+  other: {
+    "google-adsense-account": "ca-pub-7432207554259857",
+  },
 };
 
 export default function RootLayout({
