@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,9 +29,15 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
+      <Script
+        async
+        src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7432207554259857"
+        crossOrigin="anonymous"
+        strategy="beforeInteractive"
+      />
+
       <body className="min-h-full flex flex-col">
         {children}
-        <meta name="google-adsense-account" content="ca-pub-7432207554259857"></meta>
       </body>
     </html>
   );
