@@ -63,6 +63,7 @@ export default function GroupPage() {
   const [settlementAmount, setSettlementAmount] = useState("");
   const [settlementMessage, setSettlementMessage] = useState("");
   const [recordingSettlement, setRecordingSettlement] = useState(false);
+  const [selectedSpendingMonth, setSelectedSpendingMonth] = useState("");
 
   useEffect(() => {
     initializePage();
@@ -716,7 +717,13 @@ export default function GroupPage() {
 
   function getMonthlyExpenditure() {
     const now = new Date();
-    const months: { key: string; label: string; total: number }[] = [];
+    const months: {
+      key: string;
+      label: string;
+      fullLabel: string;
+      total: number;
+      memberTotals: Record<string, number>;
+    }[] = [];
 
     // Show the current month and the previous five months.
     for (let offset = 5; offset >= 0; offset--) {
@@ -726,12 +733,17 @@ export default function GroupPage() {
       months.push({
         key,
         label: date.toLocaleDateString(undefined, { month: "short" }),
+        fullLabel: date.toLocaleDateString(undefined, {
+          month: "long",
+          year: "numeric",
+        }),
         total: 0,
+        memberTotals: {},
       });
     }
 
-    // Count the full expense amount, including closed expenses.
-    // Settlements are transfers between members, not new expenditure.
+    // Count the full expense amount and each participant's share.
+    // Closed expenses remain included; settlements are not expenditure.
     expenses.forEach((expense) => {
       const date = new Date(expense.createdAt);
       if (Number.isNaN(date.getTime())) return;
@@ -739,19 +751,37 @@ export default function GroupPage() {
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
       const month = months.find((item) => item.key === key);
 
-      if (month) {
-        month.total += expense.amount;
-      }
+      if (!month) return;
+
+      month.total += expense.amount;
+
+      expense.payments.forEach((payment) => {
+        month.memberTotals[payment.user_id] =
+          (month.memberTotals[payment.user_id] || 0) + payment.amount;
+      });
     });
 
     return months.map((month) => ({
       ...month,
       total: Math.round(month.total * 100) / 100,
+      memberTotals: Object.fromEntries(
+        Object.entries(month.memberTotals).map(([userId, amount]) => [
+          userId,
+          Math.round(amount * 100) / 100,
+        ])
+      ),
     }));
   }
 
   const balances = calculateBalances();
   const monthlyExpenditure = getMonthlyExpenditure();
+  const currentMonthKey = `${new Date().getFullYear()}-${String(
+    new Date().getMonth() + 1
+  ).padStart(2, "0")}`;
+  const activeSpendingMonth =
+    monthlyExpenditure.find((month) => month.key === selectedSpendingMonth) ||
+    monthlyExpenditure.find((month) => month.key === currentMonthKey) ||
+    monthlyExpenditure[monthlyExpenditure.length - 1];
   const highestMonthlyExpenditure = Math.max(
     ...monthlyExpenditure.map((month) => month.total),
     1
@@ -1098,6 +1128,60 @@ export default function GroupPage() {
 
             <p className="mt-3 text-xs text-gray-500">
               Based on the date each expense was added. Closed expenses are included; recorded repayments are not counted as new expenditure.
+            </p>
+          </div>
+
+          {/* Monthly spending by person */}
+
+          <div className="mt-6 rounded-xl bg-white p-6 shadow">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Monthly spending by person
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Each member's share of the group's expenses
+                </p>
+              </div>
+
+              <select
+                value={activeSpendingMonth?.key || ""}
+                onChange={(event) => setSelectedSpendingMonth(event.target.value)}
+                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-black"
+              >
+                {monthlyExpenditure.map((month) => (
+                  <option key={month.key} value={month.key}>
+                    {month.fullLabel}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="mt-5 space-y-4">
+              {members.map((member) => {
+                const amount =
+                  activeSpendingMonth?.memberTotals[member.user_id] || 0;
+
+                return (
+                  <div
+                    key={member.user_id}
+                    className="flex items-center justify-between gap-3"
+                  >
+                    <span className="font-medium text-gray-800">
+                      {member.name}
+                      {member.user_id === currentUserId ? " (You)" : ""}
+                    </span>
+                    <span className="font-semibold text-gray-900">
+                      €{amount.toFixed(2)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="mt-4 border-t border-gray-100 pt-3 text-xs text-gray-500">
+              Calculated from each person's expense share, not the amount they paid upfront.
+              Closed expenses are included; repayments are excluded.
             </p>
           </div>
 
