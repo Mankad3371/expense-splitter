@@ -714,7 +714,52 @@ export default function GroupPage() {
     return balances;
   }
 
+  function getMonthlyExpenditure() {
+    const now = new Date();
+    const months: { key: string; label: string; total: number }[] = [];
+
+    // Show the current month and the previous five months.
+    for (let offset = 5; offset >= 0; offset--) {
+      const date = new Date(now.getFullYear(), now.getMonth() - offset, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+      months.push({
+        key,
+        label: date.toLocaleDateString(undefined, { month: "short" }),
+        total: 0,
+      });
+    }
+
+    // Count the full expense amount, including closed expenses.
+    // Settlements are transfers between members, not new expenditure.
+    expenses.forEach((expense) => {
+      const date = new Date(expense.createdAt);
+      if (Number.isNaN(date.getTime())) return;
+
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      const month = months.find((item) => item.key === key);
+
+      if (month) {
+        month.total += expense.amount;
+      }
+    });
+
+    return months.map((month) => ({
+      ...month,
+      total: Math.round(month.total * 100) / 100,
+    }));
+  }
+
   const balances = calculateBalances();
+  const monthlyExpenditure = getMonthlyExpenditure();
+  const highestMonthlyExpenditure = Math.max(
+    ...monthlyExpenditure.map((month) => month.total),
+    1
+  );
+  const sixMonthExpenditure = monthlyExpenditure.reduce(
+    (total, month) => total + month.total,
+    0
+  );
 
   const myBalance =
     balances[currentUserId] || 0;
@@ -995,6 +1040,65 @@ export default function GroupPage() {
                 })}
               </div>
             </div>
+          </div>
+
+          {/* Monthly expenditure chart */}
+
+          <div className="mt-6 rounded-xl bg-white p-6 shadow">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold text-gray-900">
+                  Monthly expenditure
+                </h2>
+                <p className="mt-1 text-sm text-gray-500">
+                  Group expenses over the last 6 months
+                </p>
+              </div>
+
+              <div className="text-right">
+                <p className="text-xs text-gray-500">
+                  Total for 6 months
+                </p>
+                <p className="text-xl font-bold text-gray-900">
+                  €{sixMonthExpenditure.toFixed(2)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex h-56 items-end gap-2 border-b border-gray-200 px-1 sm:gap-4">
+              {monthlyExpenditure.map((month) => {
+                const barHeight = month.total > 0
+                  ? Math.max((month.total / highestMonthlyExpenditure) * 100, 4)
+                  : 0;
+
+                return (
+                  <div
+                    key={month.key}
+                    className="flex h-full min-w-0 flex-1 flex-col items-center justify-end"
+                  >
+                    <span className="mb-2 min-h-4 text-center text-[10px] font-medium text-gray-600 sm:text-xs">
+                      {month.total > 0 ? `€${month.total.toFixed(0)}` : ""}
+                    </span>
+
+                    <div className="flex h-40 w-full items-end justify-center">
+                      <div
+                        title={`${month.label}: €${month.total.toFixed(2)}`}
+                        className="w-full max-w-12 rounded-t-md bg-black transition-all"
+                        style={{ height: `${barHeight}%` }}
+                      />
+                    </div>
+
+                    <span className="mt-2 pb-2 text-xs font-medium text-gray-600">
+                      {month.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p className="mt-3 text-xs text-gray-500">
+              Based on the date each expense was added. Closed expenses are included; recorded repayments are not counted as new expenditure.
+            </p>
           </div>
 
           {/* Expenses */}
